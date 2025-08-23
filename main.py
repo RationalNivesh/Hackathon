@@ -31,6 +31,7 @@ if weather_data['cod'] == 200:
     timezone = weather_data['timezone']
     cloudy = weather_data['clouds']['all']
     description = weather_data['weather'][0]['description']
+    will_rain = "Yes" if "rain" in weather_data else "No"
 
     sunrise_time = time_from_utc_with_timezone(sunrise + timezone)
     sunset_time = time_from_utc_with_timezone(sunset + timezone)
@@ -44,49 +45,90 @@ if weather_data['cod'] == 200:
     print(f"Sunrise at {sunrise_time} and Sunset at {sunset_time}")
     print(f"Cloud: {cloudy}%")
     print(f"Info: {description}")
+    print(f"Rain:{will_rain}")
+num_events=int(input("Number of events today"))
+events=[]
+for i in range(1, num_events + 1):
+    print(f"\nEvent {i}:")
+    event_name = input("Enter the event name: ")
+    event_time = input("Enter the event time (e.g., 2:00 PM): ")
+    events.append({"name": event_name, "time": event_time})
 
-    # OpenAI part
-    #lient = OpenAI(api_key=openai_api_key)
+prompt = f"""
+Should I do the following events today: {events}
+with the current weather conditions:
+Temperature (Celsius): {temp}
+Feels like (Celsius): {feels_like_temp}
+Pressure: {pressure} hPa
+Humidity: {humidity}%
+Wind speed: {wind_speed:.2f} km/hr
+Sunrise at: {sunrise_time}
+Sunset at: {sunset_time}
+Cloud: {cloudy}%
+Info: {description}
+Rain: {will_rain}
+"""
+import openai
+import requests
+import openai
+from datetime import datetime
 
-   #ai_prompt = f"The weather in {city_name} is {description} with temperature {temp}°C, humidity {humidity}%, and wind speed {wind_speed:.2f} km/hr. Should the user do outdoor activities in this weather?"
-    #response = client.responses.create(
-          #model="gpt-5",
-          # input=ai_prompt
-        #add a bracket
-    #print("\nAI Suggestion:", response.output_text)
-    from google_auth_oaouthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
-    from google.ouath2.credentials import Credentials
-    from openai import openai
-    import os, datetime
-    SCOPES= ["https:googleapis.com/auth/calendar.readonly"]
-    from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-import os, datetime
+# ========== CONFIG ==========
+OPENWEATHER_API_KEY = "YOUR_OPENWEATHER_API_KEY"   # Get from https://openweathermap.org/api
+OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"             # Get from https://platform.openai.com
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-def get_calendar_events(max_results=5):
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+# ========== WEATHER FETCH ==========
+def get_weather(city="Delhi"):
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
+    response = requests.get(url).json()
 
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
+    weather_data = {
+        "city": city,
+        "temperature": response["main"]["temp"],
+        "humidity": response["main"]["humidity"],
+        "wind_speed": response["wind"]["speed"],
+        "rain": response.get("rain", {}).get("1h", 0),
+        "condition": response["weather"][0]["description"]
+    }
+    return weather_data
 
-    service = build("calendar", "v3", credentials=creds)
-    now = datetime.datetime.utcnow().isoformat() + "Z"
+# ========== GPT CHAT ==========
+def chat_with_gpt(prompt):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
 
-    events = service.events().list(
-        calendarId="primary",
-        timeMin=now,
-        maxResults=max_results,
-        singleEvents=True,
-        orderBy="startTime"
-    ).execute().get("items", [])
+# ========== MAIN ==========
+def main():
+    # Ask user for schedule
+    num_events = int(input("How many events do you have today? "))
+    events = []
+    for i in range(num_events):
+        event = input(f"Enter event {i+1} (e.g., 'Math class at 4 PM'): ")
+        events.append(event)
 
-    return [f"{e.get('summary', '(No title)')} at {e['start'].get('dateTime', e['start'].get('date'))}" for e in events]
+    # Get weather
+    city = input("Enter your city: ")
+    weather = get_weather(city)
+
+    # Prepare prompt for GPT
+    prompt = (
+        f"Here is my schedule for today:\n{events}\n\n"
+        f"Here is the current weather in {weather['city']}:\n"
+        f"Temperature: {weather['temperature']}°C\n"
+        f"Humidity: {weather['humidity']}%\n"
+        f"Wind Speed: {weather['wind_speed']} m/s\n"
+        f"Rain (last hour): {weather['rain']} mm\n"
+        f"Condition: {weather['condition']}\n\n"
+        f"Suggest the best order of tasks and precautions I should take (like carrying umbrella, hydration, etc.)"
+    )
+
+    # Get GPT response
+    answer = chat_with_gpt(prompt)
+    print("\n===== AI Suggestion =====\n")
+    print(answer)
+main()
